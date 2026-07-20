@@ -1,173 +1,49 @@
 'use client';
 
-import { useCallback, useEffect, useRef, useState } from 'react';
-import * as Tone from 'tone';
 import Slider from './Slider';
 import Reel from './Reel';
+import { usePlayer } from './PlayerProvider';
+import { formatTime } from '@/lib/format';
+import type { Song } from '@/lib/db';
 
 type AudioPlayerProps = {
-  audioUrl: string;
+  song: Song;
+  /** Ordered list of tracks (e.g. an album) this song belongs to, for skip next/previous. */
+  queue?: Song[];
 };
 
-function formatTime(seconds: number): string {
-  if (!Number.isFinite(seconds) || seconds < 0) seconds = 0;
-  const m = Math.floor(seconds / 60);
-  const s = Math.floor(seconds % 60);
-  return `${m}:${s.toString().padStart(2, '0')}`;
-}
+export default function AudioPlayer({ song, queue }: AudioPlayerProps) {
+  const player = usePlayer();
+  const isCurrent = player.currentSong?.id === song.id;
 
-export default function AudioPlayer({ audioUrl }: AudioPlayerProps) {
-  const playerRef = useRef<Tone.GrainPlayer | null>(null);
-  const rafRef = useRef<number | null>(null);
-  const timing = useRef({ offset: 0, startedAt: 0, rate: 1 });
+  const isPlaying = isCurrent && player.isPlaying;
+  const loading = isCurrent && !player.ready && !player.error;
+  const duration = isCurrent ? player.duration : 0;
+  const elapsed = isCurrent ? player.elapsed : 0;
+  const speed = isCurrent ? player.speed : 1;
+  const pitch = isCurrent ? player.pitch : 0;
+  const error = isCurrent ? player.error : null;
 
-  const [ready, setReady] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [isPlaying, setIsPlaying] = useState(false);
-  const [duration, setDuration] = useState(0);
-  const [elapsed, setElapsed] = useState(0);
-  const [speed, setSpeed] = useState(1);
-  const [pitch, setPitch] = useState(0);
-  const [volume, setVolume] = useState(0.85);
-
-  const cancelAnim = useCallback(() => {
-    if (rafRef.current !== null) {
-      cancelAnimationFrame(rafRef.current);
-      rafRef.current = null;
+  function handlePlayPause() {
+    if (isCurrent) {
+      player.togglePlay();
+    } else {
+      player.playSong(song, queue && queue.length ? queue : [song]);
     }
-  }, []);
+  }
 
-  useEffect(() => {
-    setReady(false);
-    setError(null);
-    setIsPlaying(false);
-    setElapsed(0);
-    setDuration(0);
-    setSpeed(1);
-    setPitch(0);
-    timing.current = { offset: 0, startedAt: 0, rate: 1 };
+  function handleSeek(fraction: number) {
+    if (!isCurrent) return;
+    player.seek(fraction);
+  }
 
-    const player = new Tone.GrainPlayer({
-      url: audioUrl,
-      grainSize: 0.2,
-      overlap: 0.1,
-      onload: () => {
-        setDuration(player.buffer.duration);
-        setReady(true);
-      },
-      onerror: () => setError('Could not load this audio file.'),
-    }).toDestination();
-    player.volume.value = Tone.gainToDb(volume);
+  function handleSpeedChange(value: number) {
+    if (isCurrent) player.setSpeed(value);
+  }
 
-    playerRef.current = player;
-
-    return () => {
-      cancelAnim();
-      try {
-        player.stop();
-      } catch {
-        // already stopped
-      }
-      player.dispose();
-      playerRef.current = null;
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [audioUrl]);
-
-  const tick = useCallback(() => {
-    const t = timing.current;
-    const now = Tone.now();
-    const currentElapsed = t.offset + (now - t.startedAt) * t.rate;
-    if (currentElapsed >= duration) {
-      setElapsed(duration);
-      setIsPlaying(false);
-      cancelAnim();
-      return;
-    }
-    setElapsed(currentElapsed);
-    rafRef.current = requestAnimationFrame(tick);
-  }, [cancelAnim, duration]);
-
-  const currentElapsedNow = useCallback(() => {
-    const t = timing.current;
-    const now = Tone.now();
-    return t.offset + (now - t.startedAt) * t.rate;
-  }, []);
-
-  const handlePlay = useCallback(async () => {
-    const player = playerRef.current;
-    if (!player || !ready) return;
-    await Tone.start();
-    const startOffset = elapsed >= duration - 0.05 ? 0 : elapsed;
-    player.playbackRate = speed;
-    player.detune = pitch * 100;
-    player.start(undefined, startOffset);
-    timing.current = { offset: startOffset, startedAt: Tone.now(), rate: speed };
-    setIsPlaying(true);
-    cancelAnim();
-    rafRef.current = requestAnimationFrame(tick);
-  }, [cancelAnim, duration, elapsed, pitch, ready, speed, tick]);
-
-  const handlePause = useCallback(() => {
-    const player = playerRef.current;
-    if (!player) return;
-    const currentElapsed = currentElapsedNow();
-    player.stop();
-    cancelAnim();
-    setElapsed(Math.min(currentElapsed, duration));
-    setIsPlaying(false);
-  }, [cancelAnim, currentElapsedNow, duration]);
-
-  const handleSeek = useCallback(
-    (fraction: number) => {
-      const player = playerRef.current;
-      if (!player || !ready) return;
-      const newOffset = Math.max(0, Math.min(duration, fraction * duration));
-      if (isPlaying) {
-        player.stop();
-        player.start(undefined, newOffset);
-        timing.current = { offset: newOffset, startedAt: Tone.now(), rate: speed };
-      } else {
-        timing.current.offset = newOffset;
-      }
-      setElapsed(newOffset);
-    },
-    [duration, isPlaying, ready, speed]
-  );
-
-  const handleSpeedChange = useCallback(
-    (value: number) => {
-      setSpeed(value);
-      const player = playerRef.current;
-      if (!player) return;
-      if (isPlaying) {
-        const currentElapsed = currentElapsedNow();
-        timing.current = { offset: currentElapsed, startedAt: Tone.now(), rate: value };
-      }
-      player.playbackRate = value;
-    },
-    [currentElapsedNow, isPlaying]
-  );
-
-  const handlePitchChange = useCallback((value: number) => {
-    setPitch(value);
-    const player = playerRef.current;
-    if (player) player.detune = value * 100;
-  }, []);
-
-  const handleVolumeChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
-    const value = Number(e.target.value);
-    setVolume(value);
-    const player = playerRef.current;
-    if (player) player.volume.value = Tone.gainToDb(Math.max(0.0001, value));
-  }, []);
-
-  // Keep the progress bar moving smoothly even while paused-at-position.
-  useEffect(() => {
-    if (!isPlaying) return;
-    rafRef.current = requestAnimationFrame(tick);
-    return cancelAnim;
-  }, [isPlaying, tick, cancelAnim]);
+  function handlePitchChange(value: number) {
+    if (isCurrent) player.setPitch(value);
+  }
 
   const progressPercent = duration > 0 ? Math.min(100, (elapsed / duration) * 100) : 0;
 
@@ -178,11 +54,24 @@ export default function AudioPlayer({ audioUrl }: AudioPlayerProps) {
       ) : (
         <>
           <div className="flex flex-col gap-6 sm:flex-row sm:items-center">
-            <div className="flex items-center gap-4">
+            <div className="flex items-center gap-3">
               <Reel spinning={isPlaying} speed={speed} />
+
               <button
-                onClick={isPlaying ? handlePause : handlePlay}
-                disabled={!ready}
+                onClick={() => isCurrent && player.previous()}
+                disabled={!isCurrent || !player.hasPrevious}
+                className="flex h-9 w-9 items-center justify-center text-boneDim transition hover:text-bone disabled:opacity-25"
+                aria-label="Previous track"
+              >
+                <svg width="15" height="15" viewBox="0 0 18 18" fill="currentColor">
+                  <rect x="3" y="2" width="2.4" height="14" />
+                  <path d="M15 2.5v13L5 9z" />
+                </svg>
+              </button>
+
+              <button
+                onClick={handlePlayPause}
+                disabled={loading}
                 className="flex h-14 w-14 items-center justify-center rounded-full bg-brass text-ink transition hover:bg-brassBright disabled:opacity-40"
                 aria-label={isPlaying ? 'Pause' : 'Play'}
               >
@@ -196,6 +85,18 @@ export default function AudioPlayer({ audioUrl }: AudioPlayerProps) {
                     <path d="M4 2.5v13l12-6.5z" />
                   </svg>
                 )}
+              </button>
+
+              <button
+                onClick={() => isCurrent && player.next()}
+                disabled={!isCurrent || !player.hasNext}
+                className="flex h-9 w-9 items-center justify-center text-boneDim transition hover:text-bone disabled:opacity-25"
+                aria-label="Next track"
+              >
+                <svg width="15" height="15" viewBox="0 0 18 18" fill="currentColor">
+                  <path d="M3 2.5v13l10-6.5z" />
+                  <rect x="12.6" y="2" width="2.4" height="14" />
+                </svg>
               </button>
             </div>
 
@@ -218,30 +119,8 @@ export default function AudioPlayer({ audioUrl }: AudioPlayerProps) {
               </div>
               <div className="mt-1.5 flex justify-between font-mono text-xs text-boneDim tabular-nums">
                 <span>{formatTime(elapsed)}</span>
-                <span>{ready ? formatTime(duration) : '—:—'}</span>
+                <span>{isCurrent && player.ready ? formatTime(duration) : '—:—'}</span>
               </div>
-            </div>
-
-            <div className="flex items-center gap-2">
-              <svg width="16" height="16" viewBox="0 0 16 16" fill="none" className="text-boneDim">
-                <path d="M2 6h2.5L8 3v10L4.5 10H2z" fill="currentColor" />
-                <path
-                  d="M10.5 5.5c1 .8 1 4.2 0 5"
-                  stroke="currentColor"
-                  strokeWidth="1.2"
-                  strokeLinecap="round"
-                />
-              </svg>
-              <input
-                type="range"
-                min={0}
-                max={1}
-                step={0.01}
-                value={volume}
-                onChange={handleVolumeChange}
-                className="h-1 w-20 accent-brass"
-                aria-label="Volume"
-              />
             </div>
           </div>
 
@@ -269,6 +148,11 @@ export default function AudioPlayer({ audioUrl }: AudioPlayerProps) {
               accent="brass"
             />
           </div>
+          {!isCurrent && (
+            <p className="mt-4 text-center font-mono text-[11px] text-boneDim">
+              Press play to load this track — speed &amp; pitch apply once it's playing here.
+            </p>
+          )}
         </>
       )}
     </div>
