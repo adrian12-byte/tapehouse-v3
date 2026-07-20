@@ -19,6 +19,7 @@ export type Song = {
   mime_type: string | null;
   size_bytes: number | null;
   album_id: string | null;
+  position: number;
   owner_id: string | null;
   owner_username: string | null;
   visibility: Visibility;
@@ -85,6 +86,7 @@ export function ensureSchema(): Promise<void> {
           mime_type TEXT,
           size_bytes BIGINT,
           album_id TEXT REFERENCES albums(id) ON DELETE SET NULL,
+          position INTEGER NOT NULL DEFAULT 0,
           owner_id TEXT REFERENCES users(id) ON DELETE SET NULL,
           visibility TEXT NOT NULL DEFAULT 'public',
           created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
@@ -93,6 +95,7 @@ export function ensureSchema(): Promise<void> {
       `;
       // Backfill for databases created before album/user support existed.
       await db`ALTER TABLE songs ADD COLUMN IF NOT EXISTS album_id TEXT REFERENCES albums(id) ON DELETE SET NULL`;
+      await db`ALTER TABLE songs ADD COLUMN IF NOT EXISTS position INTEGER NOT NULL DEFAULT 0`;
       await db`ALTER TABLE songs ADD COLUMN IF NOT EXISTS owner_id TEXT REFERENCES users(id) ON DELETE SET NULL`;
       await db`ALTER TABLE songs ADD COLUMN IF NOT EXISTS visibility TEXT NOT NULL DEFAULT 'public'`;
       await db`ALTER TABLE albums ADD COLUMN IF NOT EXISTS owner_id TEXT REFERENCES users(id) ON DELETE SET NULL`;
@@ -154,9 +157,26 @@ export async function listSongsByAlbum(albumId: string): Promise<Song[]> {
     FROM songs s
     LEFT JOIN users u ON u.id = s.owner_id
     WHERE s.album_id = ${albumId}
-    ORDER BY s.created_at ASC
+    ORDER BY s.position ASC, s.created_at ASC
   `;
   return rows as Song[];
+}
+
+async function getNextAlbumPosition(albumId: string): Promise<number> {
+  const db = sql();
+  const rows = await db`SELECT COALESCE(MAX(position), -1) + 1 AS next FROM songs WHERE album_id = ${albumId}`;
+  return Number(rows[0]?.next ?? 0);
+}
+
+export async function reorderAlbumSongs(albumId: string, orderedSongIds: string[]): Promise<void> {
+  await ensureSchema();
+  const db = sql();
+  for (let i = 0; i < orderedSongIds.length; i++) {
+    await db`
+      UPDATE songs SET position = ${i}, updated_at = now()
+      WHERE id = ${orderedSongIds[i]} AND album_id = ${albumId}
+    `;
+  }
 }
 
 export async function getSong(id: string): Promise<Song | null> {
@@ -186,9 +206,10 @@ export async function createSong(input: {
 }): Promise<Song> {
   await ensureSchema();
   const db = sql();
+  const position = input.albumId ? await getNextAlbumPosition(input.albumId) : 0;
   await db`
-    INSERT INTO songs (id, title, lyrics, audio_url, audio_pathname, original_filename, mime_type, size_bytes, album_id, owner_id, visibility)
-    VALUES (${input.id}, ${input.title}, ${input.lyrics}, ${input.audioUrl}, ${input.audioPathname}, ${input.originalFilename}, ${input.mimeType}, ${input.sizeBytes}, ${input.albumId ?? null}, ${input.ownerId}, ${input.visibility ?? 'public'})
+    INSERT INTO songs (id, title, lyrics, audio_url, audio_pathname, original_filename, mime_type, size_bytes, album_id, position, owner_id, visibility)
+    VALUES (${input.id}, ${input.title}, ${input.lyrics}, ${input.audioUrl}, ${input.audioPathname}, ${input.originalFilename}, ${input.mimeType}, ${input.sizeBytes}, ${input.albumId ?? null}, ${position}, ${input.ownerId}, ${input.visibility ?? 'public'})
   `;
   return (await getSong(input.id)) as Song;
 }
@@ -205,8 +226,12 @@ export async function updateSongMeta(
   const lyrics = input.lyrics ?? current.lyrics;
   const albumId = input.albumId !== undefined ? input.albumId : current.album_id;
   const visibility = input.visibility ?? current.visibility;
+  let position = current.position;
+  if (input.albumId !== undefined && input.albumId !== current.album_id && input.albumId) {
+    position = await getNextAlbumPosition(input.albumId);
+  }
   await db`
-    UPDATE songs SET title = ${title}, lyrics = ${lyrics}, album_id = ${albumId}, visibility = ${visibility}, updated_at = now()
+    UPDATE songs SET title = ${title}, lyrics = ${lyrics}, album_id = ${albumId}, position = ${position}, visibility = ${visibility}, updated_at = now()
     WHERE id = ${id}
   `;
   return getSong(id);

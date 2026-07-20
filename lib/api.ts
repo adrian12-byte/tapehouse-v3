@@ -153,3 +153,13 @@ export async function deleteAlbumRequest(id: string): Promise<void> {
   const res = await fetch(`/api/albums/${id}`, { method: 'DELETE' });
   await handle(res);
 }
+
+export async function reorderAlbumSongsRequest(albumId: string, songIds: string[]): Promise<Song[]> {
+  const res = await fetch(`/api/albums/${albumId}/reorder`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ songIds }),
+  });
+  const data = await handle<{ songs: Song[] }>(res);
+  return data.songs;
+}
