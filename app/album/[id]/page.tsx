@@ -3,7 +3,7 @@
 import { useEffect, useState } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import Link from 'next/link';
-import SongList from '@/components/SongList';
+import AlbumTrackList from '@/components/AlbumTrackList';
 import UploadForm from '@/components/UploadForm';
 import ReplaceThumbnailButton from '@/components/ReplaceThumbnailButton';
 import { useAuth } from '@/components/AuthProvider';
@@ -171,7 +171,12 @@ export default function AlbumPage() {
           </div>
         )}
         <div>
-          <SongList songs={songs} />
+          <AlbumTrackList
+            albumId={album.id}
+            songs={songs}
+            isOwner={isOwner}
+            onReordered={setSongs}
+          />
         </div>
       </div>
     </main>

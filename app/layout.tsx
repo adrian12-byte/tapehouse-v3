@@ -2,6 +2,8 @@ import type { Metadata } from 'next';
 import { Space_Grotesk, Inter, IBM_Plex_Mono } from 'next/font/google';
 import './globals.css';
 import { AuthProvider } from '@/components/AuthProvider';
+import { PlayerProvider } from '@/components/PlayerProvider';
+import NowPlayingBar from '@/components/NowPlayingBar';
 
 const display = Space_Grotesk({
   subsets: ['latin'],
@@ -30,7 +32,12 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
   return (
     <html lang="en" className={`${display.variable} ${body.variable} ${mono.variable}`}>
       <body className="bg-ink text-bone font-body antialiased">
-        <AuthProvider>{children}</AuthProvider>
+        <AuthProvider>
+          <PlayerProvider>
+            {children}
+            <NowPlayingBar />
+          </PlayerProvider>
+        </AuthProvider>
       </body>
     </html>
   );

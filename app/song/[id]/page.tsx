@@ -8,7 +8,7 @@ import LyricsEditor from '@/components/LyricsEditor';
 import ReplaceAudioButton from '@/components/ReplaceAudioButton';
 import { useAuth } from '@/components/AuthProvider';
 import type { AlbumWithCount, Song } from '@/lib/db';
-import { deleteSongRequest, fetchAlbums, fetchSong, updateSongMetaRequest } from '@/lib/api';
+import { deleteSongRequest, fetchAlbum, fetchAlbums, fetchSong, updateSongMetaRequest } from '@/lib/api';
 
 export default function SongPage() {
   const params = useParams<{ id: string }>();
@@ -16,6 +16,7 @@ export default function SongPage() {
   const { user } = useAuth();
   const [song, setSong] = useState<Song | null>(null);
   const [albums, setAlbums] = useState<AlbumWithCount[]>([]);
+  const [albumQueue, setAlbumQueue] = useState<Song[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [titleDraft, setTitleDraft] = useState('');
   const [editingTitle, setEditingTitle] = useState(false);
@@ -30,6 +31,13 @@ export default function SongPage() {
       .then((s) => {
         setSong(s);
         setTitleDraft(s.title);
+        if (s.album_id) {
+          fetchAlbum(s.album_id)
+            .then(({ songs }) => setAlbumQueue(songs))
+            .catch(() => setAlbumQueue([]));
+        } else {
+          setAlbumQueue([]);
+        }
       })
       .catch((err) => setError(err instanceof Error ? err.message : 'Failed to load song'));
     fetchAlbums()
@@ -174,7 +182,7 @@ export default function SongPage() {
 
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-[1fr_1.1fr]">
         <div className="flex flex-col gap-4">
-          <AudioPlayer key={song.audio_url} audioUrl={song.audio_url} />
+          <AudioPlayer song={song} queue={albumQueue.length ? albumQueue : undefined} />
 
           {isOwner && (
             <div className="flex items-center justify-between border border-hairline bg-panel px-4 py-3">
