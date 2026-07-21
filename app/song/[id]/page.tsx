@@ -7,7 +7,7 @@ import AudioPlayer from '@/components/AudioPlayer';
 import LyricsEditor from '@/components/LyricsEditor';
 import ReplaceAudioButton from '@/components/ReplaceAudioButton';
 import { useAuth } from '@/components/AuthProvider';
-import type { AlbumWithCount, Song } from '@/lib/db';
+import type { Album, AlbumWithCount, Song } from '@/lib/db';
 import { deleteSongRequest, fetchAlbum, fetchAlbums, fetchSong, updateSongMetaRequest } from '@/lib/api';
 
 export default function SongPage() {
@@ -17,6 +17,7 @@ export default function SongPage() {
   const [song, setSong] = useState<Song | null>(null);
   const [albums, setAlbums] = useState<AlbumWithCount[]>([]);
   const [albumQueue, setAlbumQueue] = useState<Song[]>([]);
+  const [parentAlbum, setParentAlbum] = useState<Album | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [titleDraft, setTitleDraft] = useState('');
   const [editingTitle, setEditingTitle] = useState(false);
@@ -33,10 +34,17 @@ export default function SongPage() {
         setTitleDraft(s.title);
         if (s.album_id) {
           fetchAlbum(s.album_id)
-            .then(({ songs }) => setAlbumQueue(songs))
-            .catch(() => setAlbumQueue([]));
+            .then(({ album, songs }) => {
+              setAlbumQueue(songs);
+              setParentAlbum(album);
+            })
+            .catch(() => {
+              setAlbumQueue([]);
+              setParentAlbum(null);
+            });
         } else {
           setAlbumQueue([]);
+          setParentAlbum(null);
         }
       })
       .catch((err) => setError(err instanceof Error ? err.message : 'Failed to load song'));
@@ -131,10 +139,10 @@ export default function SongPage() {
     <main className="mx-auto min-h-screen max-w-5xl px-6 py-12">
       <div className="mb-8 flex items-center justify-between">
         <Link
-          href="/"
+          href={parentAlbum ? `/album/${parentAlbum.id}` : '/'}
           className="font-mono text-xs uppercase tracking-wide text-boneDim transition hover:text-brassBright"
         >
-          ← The deck
+          ← {parentAlbum ? parentAlbum.title : 'The deck'}
         </Link>
         {isOwner && (
           <button
