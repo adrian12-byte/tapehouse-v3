@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
 import { usePlayer } from './PlayerProvider';
 import { reorderAlbumSongsRequest } from '@/lib/api';
@@ -19,6 +19,26 @@ export default function AlbumTrackList({
 }) {
   const player = usePlayer();
   const [saving, setSaving] = useState(false);
+  const [draggingId, setDraggingId] = useState<string | null>(null);
+
+  // Keep a ref mirror of the live order so pointermove/pointerup handlers
+  // (which don't re-subscribe on every render) always read the latest list.
+  const songsRef = useRef(songs);
+  const originalOrderRef = useRef(songs);
+  useEffect(() => {
+    songsRef.current = songs;
+  }, [songs]);
+
+  async function persist(orderedSongs: Song[], fallbackOnFailure: Song[]) {
+    setSaving(true);
+    try {
+      await reorderAlbumSongsRequest(albumId, orderedSongs.map((s) => s.id));
+    } catch {
+      onReordered(fallbackOnFailure);
+    } finally {
+      setSaving(false);
+    }
+  }
 
   async function move(index: number, direction: -1 | 1) {
     const newIndex = index + direction;
@@ -27,14 +47,44 @@ export default function AlbumTrackList({
     const [item] = reordered.splice(index, 1);
     reordered.splice(newIndex, 0, item);
     onReordered(reordered);
-    setSaving(true);
-    try {
-      await reorderAlbumSongsRequest(albumId, reordered.map((s) => s.id));
-    } catch {
-      onReordered(songs); // revert on failure
-    } finally {
-      setSaving(false);
-    }
+    await persist(reordered, songs);
+  }
+
+  function handleGripPointerDown(e: React.PointerEvent<HTMLButtonElement>, songId: string) {
+    e.preventDefault();
+    e.currentTarget.setPointerCapture(e.pointerId);
+    originalOrderRef.current = songsRef.current;
+    setDraggingId(songId);
+  }
+
+  function handleGripPointerMove(e: React.PointerEvent<HTMLButtonElement>) {
+    if (!draggingId) return;
+    const el = document.elementFromPoint(e.clientX, e.clientY);
+    const row = el?.closest('[data-row-id]') as HTMLElement | null;
+    if (!row) return;
+    const overId = row.dataset.rowId;
+    if (!overId || overId === draggingId) return;
+
+    const current = songsRef.current;
+    const fromIndex = current.findIndex((s) => s.id === draggingId);
+    const toIndex = current.findIndex((s) => s.id === overId);
+    if (fromIndex === -1 || toIndex === -1 || fromIndex === toIndex) return;
+
+    const reordered = [...current];
+    const [item] = reordered.splice(fromIndex, 1);
+    reordered.splice(toIndex, 0, item);
+    onReordered(reordered);
+  }
+
+  async function handleGripPointerUp(e: React.PointerEvent<HTMLButtonElement>) {
+    if (!draggingId) return;
+    e.currentTarget.releasePointerCapture(e.pointerId);
+    setDraggingId(null);
+    const original = originalOrderRef.current;
+    const current = songsRef.current;
+    const changed = current.map((s) => s.id).join() !== original.map((s) => s.id).join();
+    if (!changed) return;
+    await persist(current, original);
   }
 
   if (songs.length === 0) {
@@ -51,8 +101,39 @@ export default function AlbumTrackList({
       {songs.map((song, i) => {
         const isCurrent = player.currentSong?.id === song.id;
         const isPlayingThis = isCurrent && player.isPlaying;
+        const isBeingDragged = draggingId === song.id;
         return (
-          <li key={song.id} className="flex items-center gap-3 px-4 py-3">
+          <li
+            key={song.id}
+            data-row-id={song.id}
+            className={`flex items-center gap-3 px-4 py-3 transition ${
+              isBeingDragged ? 'bg-panelLight/80 opacity-70' : ''
+            }`}
+          >
+            {isOwner && (
+              <button
+                type="button"
+                onPointerDown={(e) => handleGripPointerDown(e, song.id)}
+                onPointerMove={handleGripPointerMove}
+                onPointerUp={handleGripPointerUp}
+                onPointerCancel={handleGripPointerUp}
+                aria-label="Drag to reorder"
+                style={{ touchAction: 'none' }}
+                className={`flex h-8 w-5 shrink-0 items-center justify-center text-boneDim transition hover:text-brassBright ${
+                  isBeingDragged ? 'cursor-grabbing text-brassBright' : 'cursor-grab'
+                }`}
+              >
+                <svg width="10" height="16" viewBox="0 0 10 16" fill="currentColor">
+                  <circle cx="2.5" cy="2.5" r="1.4" />
+                  <circle cx="7.5" cy="2.5" r="1.4" />
+                  <circle cx="2.5" cy="8" r="1.4" />
+                  <circle cx="7.5" cy="8" r="1.4" />
+                  <circle cx="2.5" cy="13.5" r="1.4" />
+                  <circle cx="7.5" cy="13.5" r="1.4" />
+                </svg>
+              </button>
+            )}
+
             <button
               onClick={() =>
                 isCurrent ? player.togglePlay() : player.playSong(song, songs, i)
