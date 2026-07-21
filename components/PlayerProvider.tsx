@@ -31,7 +31,8 @@ type PlayerContextValue = {
 const PlayerContext = createContext<PlayerContextValue | null>(null);
 
 export function PlayerProvider({ children }: { children: React.ReactNode }) {
-  const playerRef = useRef<Tone.GrainPlayer | null>(null);
+  const playerRef = useRef<Tone.Player | Tone.GrainPlayer | null>(null);
+  const usingGrainRef = useRef(false);
   const rafRef = useRef<number | null>(null);
   const timing = useRef({ offset: 0, startedAt: 0, rate: 1 });
 
@@ -152,6 +153,7 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
       playerRef.current.dispose();
       playerRef.current = null;
     }
+    usingGrainRef.current = false;
 
     setError(null);
     setReadyBoth(false);
@@ -164,16 +166,18 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
     setPitch(0);
     timing.current = { offset: 0, startedAt: 0, rate: 1 };
 
-    const player = new Tone.GrainPlayer({
+    // Plain Tone.Player by default — clean, artifact-free playback. The
+    // granular engine (GrainPlayer) is only swapped in the moment the
+    // listener actually moves the speed or pitch slider away from normal,
+    // since granular synthesis is what was causing an audible warble
+    // (fluctuating volume/pitch) even during completely untouched playback.
+    const player = new Tone.Player({
       url: song.audio_url,
-      grainSize: 0.2,
-      overlap: 0.1,
       onload: () => {
         setDurationBoth(player.buffer.duration);
         setReadyBoth(true);
         if (autoplay) {
           player.playbackRate = speedRef.current;
-          player.detune = pitchRef.current * 100;
           player.start(undefined, 0);
           timing.current = { offset: 0, startedAt: Tone.now(), rate: speedRef.current };
           setPlayingBoth(true);
@@ -185,6 +189,60 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
     playerRef.current = player;
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [cancelAnim]);
+
+  // Swaps the currently-loaded plain Player for a GrainPlayer built from the
+  // same already-decoded buffer (no re-fetch/re-decode needed), preserving
+  // playback position and playing state. Only called once the listener
+  // actually changes speed or pitch away from the default.
+  const switchToGrain = useCallback(() => {
+    if (usingGrainRef.current || !playerRef.current) return;
+    const oldPlayer = playerRef.current;
+    const wasPlaying = isPlayingRef.current;
+    const resumeAt = wasPlaying ? currentElapsedNow() : elapsedRef.current;
+    const buffer = oldPlayer.buffer;
+
+    try {
+      oldPlayer.stop();
+    } catch {
+      // already stopped
+    }
+    oldPlayer.dispose();
+    cancelAnim();
+    setPlayingBoth(false);
+
+    const grain = new Tone.GrainPlayer({
+      url: buffer,
+      grainSize: 0.1,
+      overlap: 0.08,
+      onload: () => {
+        setReadyBoth(true);
+        if (wasPlaying) {
+          grain.playbackRate = speedRef.current;
+          grain.detune = pitchRef.current * 100;
+          grain.start(undefined, resumeAt);
+          timing.current = { offset: resumeAt, startedAt: Tone.now(), rate: speedRef.current };
+          setPlayingBoth(true);
+        } else {
+          timing.current.offset = resumeAt;
+        }
+      },
+      onerror: () => setError('Could not load this audio file.'),
+    }).toDestination();
+    grain.volume.value = Tone.gainToDb(volumeRef.current);
+    grain.playbackRate = speedRef.current;
+    grain.detune = pitchRef.current * 100;
+    playerRef.current = grain;
+    usingGrainRef.current = true;
+  }, [cancelAnim, currentElapsedNow]);
+
+  const ensureEngineFor = useCallback(
+    (nextSpeed: number, nextPitch: number) => {
+      if ((nextSpeed !== 1 || nextPitch !== 0) && !usingGrainRef.current) {
+        switchToGrain();
+      }
+    },
+    [switchToGrain]
+  );
 
   const playSong = useCallback(
     async (song: Song, newQueue?: Song[], index?: number) => {
@@ -253,6 +311,7 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
     (value: number) => {
       speedRef.current = value;
       setSpeed(value);
+      ensureEngineFor(value, pitchRef.current);
       const player = playerRef.current;
       if (!player) return;
       if (isPlayingRef.current) {
@@ -261,15 +320,20 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
       }
       player.playbackRate = value;
     },
-    [currentElapsedNow]
+    [currentElapsedNow, ensureEngineFor]
   );
 
-  const setPitchFn = useCallback((value: number) => {
-    pitchRef.current = value;
-    setPitch(value);
-    const player = playerRef.current;
-    if (player) player.detune = value * 100;
-  }, []);
+  const setPitchFn = useCallback(
+    (value: number) => {
+      pitchRef.current = value;
+      setPitch(value);
+      ensureEngineFor(speedRef.current, value);
+      if (usingGrainRef.current && playerRef.current) {
+        (playerRef.current as Tone.GrainPlayer).detune = value * 100;
+      }
+    },
+    [ensureEngineFor]
+  );
 
   const setVolumeFn = useCallback((value: number) => {
     volumeRef.current = value;
