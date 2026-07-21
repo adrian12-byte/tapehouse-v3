@@ -80,13 +80,19 @@ Open http://localhost:3000.
 - Album cover art uploads reuse the same direct-to-Blob flow as audio, just
   restricted to image types via a `clientPayload` hint sent from the
   browser.
-- `components/PlayerProvider.tsx` — a single Tone.js `GrainPlayer` lives in
-  React context at the root layout, above the routed page content, so
-  playback isn't tied to any one page and survives client-side navigation.
-  It also tracks an ordered "queue" (an album's tracks) so **Skip
-  next/previous** works, and auto-advances to the next track when one ends.
-  A persistent mini-player (`components/NowPlayingBar.tsx`) shows whatever's
-  currently playing at the bottom of every page.
+- `components/PlayerProvider.tsx` — a single Tone.js source lives in React
+  context at the root layout, above the routed page content, so playback
+  isn't tied to any one page and survives client-side navigation. It also
+  tracks an ordered "queue" (an album's tracks) so **Skip next/previous**
+  works, and auto-advances to the next track when one ends. A persistent
+  mini-player (`components/NowPlayingBar.tsx`) shows whatever's currently
+  playing at the bottom of every page.
+  - Playback uses a plain `Tone.Player` by default — ordinary, artifact-free
+    audio. It only swaps over to `Tone.GrainPlayer` (which enables
+    independent speed/pitch control via granular synthesis, and can
+    introduce a slight audible warble as a side effect of that technique)
+    the moment you actually move the Speed or Pitch slider away from
+    normal. Untouched playback is always the clean engine.
 - Track order within an album is a `position` column, editable only by the
   album's owner via up/down controls on `components/AlbumTrackList.tsx` and
   persisted through `app/api/albums/[id]/reorder`.
