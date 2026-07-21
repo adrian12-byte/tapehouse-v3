@@ -2,10 +2,12 @@
 
 Upload songs, attach names and lyrics, swap the audio file whenever you like, warp
 playback speed and pitch independently, download the original file back out, and
-group tracks into album projects with their own cover art — all from a browser,
-hosted on Vercel. Accounts keep things tidy: every track and album has an owner,
-only that owner can rename, edit, replace, move, or delete it, and each owner
-decides per-track whether the download link is public or for their eyes only.
+group tracks into album projects with reorderable tracks and their own cover art —
+all from a browser, hosted on Vercel. Playback keeps going as you browse to other
+pages, with skip next/previous through whatever album you're listening to.
+Accounts keep things tidy: every track and album has an owner, only that owner can
+rename, edit, replace, reorder, or delete it, and each owner decides per-track
+whether the download link is public or for their eyes only.
 
 - **Storage:** audio files live in Vercel Blob; titles, lyrics, and file
   references live in a Postgres database (Neon, via Vercel's Storage tab).
@@ -78,6 +80,16 @@ Open http://localhost:3000.
 - Album cover art uploads reuse the same direct-to-Blob flow as audio, just
   restricted to image types via a `clientPayload` hint sent from the
   browser.
+- `components/PlayerProvider.tsx` — a single Tone.js `GrainPlayer` lives in
+  React context at the root layout, above the routed page content, so
+  playback isn't tied to any one page and survives client-side navigation.
+  It also tracks an ordered "queue" (an album's tracks) so **Skip
+  next/previous** works, and auto-advances to the next track when one ends.
+  A persistent mini-player (`components/NowPlayingBar.tsx`) shows whatever's
+  currently playing at the bottom of every page.
+- Track order within an album is a `position` column, editable only by the
+  album's owner via up/down controls on `components/AlbumTrackList.tsx` and
+  persisted through `app/api/albums/[id]/reorder`.
 - `app/api/auth/*` — register, login, logout, and "who am I" endpoints.
   Passwords are hashed with bcrypt; sessions are a signed, `httpOnly`
   cookie (via `jose`), not stored server-side.
